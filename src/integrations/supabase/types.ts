@@ -32,6 +32,30 @@ export type Database = {
         }
         Relationships: []
       }
+      profiles: {
+        Row: {
+          auth_user_id: string
+          created_at: string
+          id: string
+          updated_at: string
+          username: string | null
+        }
+        Insert: {
+          auth_user_id: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+          username?: string | null
+        }
+        Update: {
+          auth_user_id?: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+          username?: string | null
+        }
+        Relationships: []
+      }
       transactions: {
         Row: {
           checkout_request_id: string | null

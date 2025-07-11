@@ -6,13 +6,19 @@ import { ArrowLeftRight, History, Settings, LogOut, User } from "lucide-react";
 import { MpesaToUsdtForm } from "./MpesaToUsdtForm";
 import { UsdtToMpesaForm } from "./UsdtToMpesaForm";
 import { TransactionHistory } from "./TransactionHistory";
+import { useAuth } from "@/hooks/useAuth";
 
 interface DashboardProps {
   username: string;
   onLogout: () => void;
 }
 
-export const Dashboard = ({ username, onLogout }: DashboardProps) => {
+export const Dashboard = ({ username }: DashboardProps) => {
+  const { signOut } = useAuth();
+
+  const handleLogout = async () => {
+    await signOut();
+  };
   const [activeTab, setActiveTab] = useState("mpesa-to-usdt");
 
   return (
@@ -33,7 +39,7 @@ export const Dashboard = ({ username, onLogout }: DashboardProps) => {
             <Button 
               variant="outline" 
               size="sm" 
-              onClick={onLogout}
+              onClick={handleLogout}
               className="flex items-center space-x-2"
             >
               <LogOut className="h-4 w-4" />
@@ -122,7 +128,7 @@ export const Dashboard = ({ username, onLogout }: DashboardProps) => {
                   <div className="pt-4 border-t">
                     <Button 
                       variant="destructive" 
-                      onClick={onLogout}
+                      onClick={handleLogout}
                       className="w-full sm:w-auto"
                     >
                       <LogOut className="h-4 w-4 mr-2" />
