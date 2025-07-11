@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator";
 import { ArrowDown, Check, Edit, Loader2, Smartphone, Wallet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 export const MpesaToUsdtForm = () => {
   const { toast } = useToast();
@@ -15,10 +16,32 @@ export const MpesaToUsdtForm = () => {
   const [confirmAddress, setConfirmAddress] = useState("");
   const [isNumberConfirmed, setIsNumberConfirmed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [exchangeRate, setExchangeRate] = useState(0.0000065);
+  const [transactionId, setTransactionId] = useState<string | null>(null);
   
-  // Mock exchange rate
-  const exchangeRate = 0.0000065; // 1 KES = 0.0000065 USDT
-  const usdtAmount = amount ? (parseFloat(amount) * exchangeRate).toFixed(6) : "0";
+  const usdtAmount = amount ? (parseFloat(amount) / (exchangeRate * 1000000)).toFixed(6) : "0";
+
+  // Fetch current exchange rate
+  useEffect(() => {
+    const fetchExchangeRate = async () => {
+      try {
+        const { data } = await supabase
+          .from('exchange_rates')
+          .select('rate')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (data) {
+          setExchangeRate(data.rate);
+        }
+      } catch (error) {
+        console.error('Error fetching exchange rate:', error);
+      }
+    };
+
+    fetchExchangeRate();
+  }, []);
 
   const handleConfirmNumber = () => {
     if (mpesaNumber.length >= 10) {
@@ -42,28 +65,112 @@ export const MpesaToUsdtForm = () => {
 
     setIsProcessing(true);
     
-    // Simulate STK Push process
-    setTimeout(() => {
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to continue with the transaction",
+          variant: "destructive"
+        });
+        setIsProcessing(false);
+        return;
+      }
+
+      // Call STK Push function
+      const { data, error } = await supabase.functions.invoke('mpesa-stk-push', {
+        body: {
+          amount: parseFloat(amount),
+          phone_number: mpesaNumber,
+          usdt_wallet_address: usdtAddress,
+          user_id: user.id,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data.success) {
+        setTransactionId(data.transaction_id);
+        toast({
+          title: "STK Push Sent!",
+          description: "Please check your phone for M-Pesa prompt",
+        });
+
+        // Start polling for transaction status
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResponse = await supabase.functions.invoke('get-transaction-status', {
+              body: {
+                transaction_id: data.transaction_id,
+                user_id: user.id,
+              },
+            });
+
+            if (statusResponse.data?.transaction) {
+              const transaction = statusResponse.data.transaction;
+              
+              if (transaction.status === 'completed') {
+                clearInterval(pollInterval);
+                setIsProcessing(false);
+                toast({
+                  title: "USDT Sent Successfully!",
+                  description: `${usdtAmount} USDT has been sent to your wallet`,
+                });
+                
+                // Reset form
+                setAmount("");
+                setMpesaNumber("");
+                setUsdtAddress("");
+                setConfirmAddress("");
+                setIsNumberConfirmed(false);
+                setTransactionId(null);
+                
+              } else if (transaction.status === 'failed') {
+                clearInterval(pollInterval);
+                setIsProcessing(false);
+                toast({
+                  title: "Transaction Failed",
+                  description: "The M-Pesa payment was not completed. Please try again.",
+                  variant: "destructive"
+                });
+                setTransactionId(null);
+              }
+            }
+          } catch (statusError) {
+            console.error('Error checking transaction status:', statusError);
+          }
+        }, 3000);
+
+        // Clear interval after 5 minutes
+        setTimeout(() => {
+          clearInterval(pollInterval);
+          if (isProcessing) {
+            setIsProcessing(false);
+            toast({
+              title: "Transaction Timeout",
+              description: "Transaction is taking longer than expected. Please check your transaction history.",
+              variant: "destructive"
+            });
+          }
+        }, 300000);
+
+      } else {
+        throw new Error(data.error || 'Failed to initiate transaction');
+      }
+
+    } catch (error) {
+      console.error('Transaction error:', error);
       setIsProcessing(false);
       toast({
-        title: "Transaction Initiated",
-        description: "Please check your phone for M-Pesa prompt",
+        title: "Transaction Failed",
+        description: error.message || "Failed to initiate transaction. Please try again.",
+        variant: "destructive"
       });
-      
-      // Simulate success after STK push
-      setTimeout(() => {
-        toast({
-          title: "USDT Sent Successfully!",
-          description: `${usdtAmount} USDT has been sent to your wallet`,
-        });
-        // Reset form
-        setAmount("");
-        setMpesaNumber("");
-        setUsdtAddress("");
-        setConfirmAddress("");
-        setIsNumberConfirmed(false);
-      }, 3000);
-    }, 1500);
+    }
   };
 
   return (
