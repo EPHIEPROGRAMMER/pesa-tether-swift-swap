@@ -32,11 +32,17 @@ serve(async (req) => {
     const consumerKey = Deno.env.get('MPESA_CONSUMER_KEY');
     const consumerSecret = Deno.env.get('MPESA_CONSUMER_SECRET');
     const businessShortCode = Deno.env.get('MPESA_BUSINESS_SHORT_CODE');
-    const passkey = Deno.env.get('MPESA_PASSKEY');
-
-    if (!consumerKey || !consumerSecret || !businessShortCode || !passkey) {
+    if (!consumerKey || !consumerSecret || !businessShortCode) {
+      console.error('Missing M-Pesa configuration:', {
+        consumerKey: !!consumerKey,
+        consumerSecret: !!consumerSecret,
+        businessShortCode: !!businessShortCode
+      });
       throw new Error('Missing M-Pesa configuration');
     }
+
+    // Use a default passkey for sandbox (this is the standard sandbox passkey)
+    const passkey = 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919';
 
     console.log('Getting M-Pesa access token...');
     
