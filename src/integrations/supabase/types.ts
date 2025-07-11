@@ -14,7 +14,102 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      exchange_rates: {
+        Row: {
+          created_at: string
+          id: string
+          rate: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          rate: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          rate?: number
+        }
+        Relationships: []
+      }
+      transactions: {
+        Row: {
+          checkout_request_id: string | null
+          completed_at: string | null
+          created_at: string
+          exchange_rate: number
+          id: string
+          kes_amount: number
+          mpesa_phone_number: string
+          mpesa_transaction_id: string | null
+          status: Database["public"]["Enums"]["transaction_status"]
+          transaction_type: Database["public"]["Enums"]["transaction_type"]
+          updated_at: string
+          usdt_amount: number
+          usdt_transaction_hash: string | null
+          usdt_wallet_address: string | null
+          user_id: string
+        }
+        Insert: {
+          checkout_request_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          exchange_rate: number
+          id?: string
+          kes_amount: number
+          mpesa_phone_number: string
+          mpesa_transaction_id?: string | null
+          status?: Database["public"]["Enums"]["transaction_status"]
+          transaction_type: Database["public"]["Enums"]["transaction_type"]
+          updated_at?: string
+          usdt_amount: number
+          usdt_transaction_hash?: string | null
+          usdt_wallet_address?: string | null
+          user_id: string
+        }
+        Update: {
+          checkout_request_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          exchange_rate?: number
+          id?: string
+          kes_amount?: number
+          mpesa_phone_number?: string
+          mpesa_transaction_id?: string | null
+          status?: Database["public"]["Enums"]["transaction_status"]
+          transaction_type?: Database["public"]["Enums"]["transaction_type"]
+          updated_at?: string
+          usdt_amount?: number
+          usdt_transaction_hash?: string | null
+          usdt_wallet_address?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      users: {
+        Row: {
+          auth_user_id: string
+          created_at: string
+          id: string
+          updated_at: string
+          username: string
+        }
+        Insert: {
+          auth_user_id: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+          username: string
+        }
+        Update: {
+          auth_user_id?: string
+          created_at?: string
+          id?: string
+          updated_at?: string
+          username?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +118,13 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      transaction_status:
+        | "pending"
+        | "processing"
+        | "completed"
+        | "failed"
+        | "cancelled"
+      transaction_type: "mpesa_to_usdt" | "usdt_to_mpesa"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +251,15 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      transaction_status: [
+        "pending",
+        "processing",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+      transaction_type: ["mpesa_to_usdt", "usdt_to_mpesa"],
+    },
   },
 } as const
