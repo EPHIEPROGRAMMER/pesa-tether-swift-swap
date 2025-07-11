@@ -1,12 +1,14 @@
+
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { ArrowDown, Check, Edit, Loader2, Smartphone, Wallet } from "lucide-react";
+import { ArrowDown, Check, Edit, Loader2, Smartphone, Wallet, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export const MpesaToUsdtForm = () => {
   const { toast } = useToast();
@@ -18,6 +20,7 @@ export const MpesaToUsdtForm = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [exchangeRate, setExchangeRate] = useState(132);
   const [transactionId, setTransactionId] = useState<string | null>(null);
+  const [transactionStatus, setTransactionStatus] = useState<string>("");
   
   const usdtAmount = amount ? (parseFloat(amount) / exchangeRate).toFixed(6) : "0";
 
@@ -63,7 +66,40 @@ export const MpesaToUsdtForm = () => {
       return;
     }
 
+    // Validate amount
+    const numAmount = parseFloat(amount);
+    if (numAmount < 1) {
+      toast({
+        title: "Invalid Amount",
+        description: "Minimum amount is KES 1",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Validate phone number format
+    const phoneRegex = /^(\+?254|0)[17]\d{8}$/;
+    if (!phoneRegex.test(mpesaNumber)) {
+      toast({
+        title: "Invalid Phone Number",
+        description: "Please enter a valid Kenyan phone number (07xxxxxxxx or 01xxxxxxxx)",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Validate USDT address
+    if (!usdtAddress.startsWith('T') || usdtAddress.length !== 34) {
+      toast({
+        title: "Invalid USDT Address",
+        description: "Please enter a valid TRON USDT address (starts with 'T' and 34 characters long)",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setIsProcessing(true);
+    setTransactionStatus("Initiating STK push...");
     
     try {
       // Get current user
@@ -82,7 +118,7 @@ export const MpesaToUsdtForm = () => {
       // Call STK Push function
       const { data, error } = await supabase.functions.invoke('mpesa-stk-push', {
         body: {
-          amount: parseFloat(amount),
+          amount: numAmount,
           phone_number: mpesaNumber,
           usdt_wallet_address: usdtAddress,
           user_id: user.id,
@@ -90,54 +126,68 @@ export const MpesaToUsdtForm = () => {
       });
 
       if (error) {
-        throw error;
+        console.error('STK Push error:', error);
+        throw new Error(error.message || 'Failed to initiate STK push');
       }
 
       if (data.success) {
         setTransactionId(data.transaction_id);
+        setTransactionStatus("STK push sent! Check your phone...");
+        
         toast({
           title: "STK Push Sent!",
-          description: "Please check your phone for M-Pesa prompt",
+          description: data.customer_message || "Please check your phone for M-Pesa prompt",
         });
 
         // Start polling for transaction status
         const pollInterval = setInterval(async () => {
           try {
-            const statusResponse = await supabase.functions.invoke('get-transaction-status', {
-              body: {
-                transaction_id: data.transaction_id,
-                user_id: user.id,
-              },
-            });
+            const { data: transaction } = await supabase
+              .from('transactions')
+              .select('*')
+              .eq('id', data.transaction_id)
+              .eq('user_id', user.id)
+              .single();
 
-            if (statusResponse.data?.transaction) {
-              const transaction = statusResponse.data.transaction;
+            if (transaction) {
+              console.log('Transaction status:', transaction.status);
               
-              if (transaction.status === 'completed') {
+              if (transaction.status === 'processing') {
+                setTransactionStatus("Payment confirmed! Processing USDT transfer...");
+              } else if (transaction.status === 'completed') {
                 clearInterval(pollInterval);
                 setIsProcessing(false);
+                setTransactionStatus("Transaction completed successfully!");
+                
                 toast({
                   title: "USDT Sent Successfully!",
                   description: `${usdtAmount} USDT has been sent to your wallet`,
                 });
                 
-                // Reset form
-                setAmount("");
-                setMpesaNumber("");
-                setUsdtAddress("");
-                setConfirmAddress("");
-                setIsNumberConfirmed(false);
-                setTransactionId(null);
+                // Reset form after a delay
+                setTimeout(() => {
+                  setAmount("");
+                  setMpesaNumber("");
+                  setUsdtAddress("");
+                  setConfirmAddress("");
+                  setIsNumberConfirmed(false);
+                  setTransactionId(null);
+                  setTransactionStatus("");
+                }, 3000);
                 
               } else if (transaction.status === 'failed') {
                 clearInterval(pollInterval);
                 setIsProcessing(false);
+                setTransactionStatus("Transaction failed");
+                
                 toast({
                   title: "Transaction Failed",
-                  description: "The M-Pesa payment was not completed. Please try again.",
+                  description: "The M-Pesa payment was not completed or USDT transfer failed. Please try again.",
                   variant: "destructive"
                 });
+                
                 setTransactionId(null);
+                setTransactionStatus("");
               }
             }
           } catch (statusError) {
@@ -145,18 +195,19 @@ export const MpesaToUsdtForm = () => {
           }
         }, 3000);
 
-        // Clear interval after 5 minutes
+        // Clear interval after 10 minutes
         setTimeout(() => {
           clearInterval(pollInterval);
           if (isProcessing) {
             setIsProcessing(false);
+            setTransactionStatus("Transaction timeout");
             toast({
               title: "Transaction Timeout",
               description: "Transaction is taking longer than expected. Please check your transaction history.",
               variant: "destructive"
             });
           }
-        }, 300000);
+        }, 600000);
 
       } else {
         throw new Error(data.error || 'Failed to initiate transaction');
@@ -165,6 +216,7 @@ export const MpesaToUsdtForm = () => {
     } catch (error) {
       console.error('Transaction error:', error);
       setIsProcessing(false);
+      setTransactionStatus("");
       toast({
         title: "Transaction Failed",
         description: error.message || "Failed to initiate transaction. Please try again.",
@@ -192,10 +244,11 @@ export const MpesaToUsdtForm = () => {
             <Input
               id="amount"
               type="number"
-              placeholder="Enter amount in KES"
+              placeholder="Enter amount in KES (minimum 1)"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="text-lg"
+              min="1"
             />
           </div>
           
@@ -222,7 +275,7 @@ export const MpesaToUsdtForm = () => {
             <Input
               id="mpesa-number"
               type="tel"
-              placeholder="0712345678"
+              placeholder="0712345678 or 0112345678"
               value={mpesaNumber}
               onChange={(e) => setMpesaNumber(e.target.value)}
               disabled={isNumberConfirmed}
@@ -297,6 +350,14 @@ export const MpesaToUsdtForm = () => {
           </div>
         </div>
 
+        {/* Transaction Status */}
+        {isProcessing && transactionStatus && (
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{transactionStatus}</AlertDescription>
+          </Alert>
+        )}
+
         {/* Transaction Button */}
         <Button
           onClick={handleTransaction}
@@ -319,7 +380,7 @@ export const MpesaToUsdtForm = () => {
         {/* Info */}
         <div className="bg-info/10 p-4 rounded-lg">
           <p className="text-sm text-info-foreground">
-            <strong>How it works:</strong> After clicking "Transact", you'll receive an M-Pesa STK push on your phone. 
+            <strong>How it works:</strong> After clicking the button, you'll receive an M-Pesa STK push on your phone. 
             Complete the payment and USDT will be sent to your wallet within 1-2 minutes.
           </p>
         </div>

@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -28,35 +29,51 @@ serve(async (req) => {
 
     const { amount, phone_number, usdt_wallet_address, user_id }: STKPushRequest = await req.json();
 
-    // Get M-Pesa access token
+    // Get M-Pesa credentials from environment
     const consumerKey = Deno.env.get('MPESA_CONSUMER_KEY');
     const consumerSecret = Deno.env.get('MPESA_CONSUMER_SECRET');
     const businessShortCode = Deno.env.get('MPESA_BUSINESS_SHORT_CODE');
-    if (!consumerKey || !consumerSecret || !businessShortCode) {
+    const passkey = Deno.env.get('MPESA_PASSKEY');
+    const environment = Deno.env.get('MPESA_ENVIRONMENT') || 'sandbox'; // 'sandbox' or 'production'
+
+    if (!consumerKey || !consumerSecret || !businessShortCode || !passkey) {
       console.error('Missing M-Pesa configuration:', {
         consumerKey: !!consumerKey,
         consumerSecret: !!consumerSecret,
-        businessShortCode: !!businessShortCode
+        businessShortCode: !!businessShortCode,
+        passkey: !!passkey
       });
       throw new Error('Missing M-Pesa configuration');
     }
 
-    // Use a default passkey for sandbox (this is the standard sandbox passkey)
-    const passkey = 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919';
-
     console.log('Getting M-Pesa access token...');
     
+    // Determine API base URL based on environment
+    const baseUrl = environment === 'production' 
+      ? 'https://api.safaricom.co.ke' 
+      : 'https://sandbox.safaricom.co.ke';
+
     // Get access token
     const authString = btoa(`${consumerKey}:${consumerSecret}`);
-    const tokenResponse = await fetch('https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials', {
+    const tokenResponse = await fetch(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
       method: 'GET',
       headers: {
         'Authorization': `Basic ${authString}`,
       },
     });
 
+    if (!tokenResponse.ok) {
+      console.error('Failed to get access token:', tokenResponse.status);
+      throw new Error('Failed to authenticate with M-Pesa');
+    }
+
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
+
+    if (!accessToken) {
+      console.error('No access token received:', tokenData);
+      throw new Error('Failed to get M-Pesa access token');
+    }
 
     console.log('Access token obtained, initiating STK Push...');
 
@@ -67,7 +84,7 @@ serve(async (req) => {
     const password = btoa(`${businessShortCode}${passkey}${timestamp}`);
 
     // Format phone number (ensure it starts with 254)
-    let formattedPhone = phone_number;
+    let formattedPhone = phone_number.replace(/\s+/g, ''); // Remove spaces
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '254' + formattedPhone.substring(1);
     } else if (formattedPhone.startsWith('+254')) {
@@ -75,6 +92,8 @@ serve(async (req) => {
     } else if (!formattedPhone.startsWith('254')) {
       formattedPhone = '254' + formattedPhone;
     }
+
+    console.log('Formatted phone number:', formattedPhone);
 
     // Get current exchange rate
     const { data: exchangeRate } = await supabaseClient
@@ -84,8 +103,10 @@ serve(async (req) => {
       .limit(1)
       .single();
 
-    const currentRate = exchangeRate?.rate || 153800;
+    const currentRate = exchangeRate?.rate || 132;
     const usdtAmount = amount / currentRate;
+
+    console.log('Exchange calculation:', { amount, currentRate, usdtAmount });
 
     // Create transaction record
     const { data: transaction, error: transactionError } = await supabaseClient
@@ -125,9 +146,9 @@ serve(async (req) => {
       TransactionDesc: `USDT Purchase - ${usdtAmount.toFixed(6)} USDT`,
     };
 
-    console.log('STK Push payload:', { ...stkPushData, Password: '[HIDDEN]' });
+    console.log('STK Push payload:', { ...stkPushData, Password: '[HIDDEN]', Timestamp: timestamp });
 
-    const stkResponse = await fetch('https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest', {
+    const stkResponse = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -149,23 +170,31 @@ serve(async (req) => {
         })
         .eq('id', transaction.id);
 
+      console.log('STK Push successful, CheckoutRequestID:', stkData.CheckoutRequestID);
+
       return new Response(JSON.stringify({
         success: true,
         message: 'STK Push sent successfully',
         transaction_id: transaction.id,
         checkout_request_id: stkData.CheckoutRequestID,
         usdt_amount: usdtAmount,
+        customer_message: stkData.CustomerMessage,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else {
+      console.error('STK Push failed:', stkData);
+      
       // Update transaction status to failed
       await supabaseClient
         .from('transactions')
-        .update({ status: 'failed' })
+        .update({ 
+          status: 'failed',
+          completed_at: new Date().toISOString(),
+        })
         .eq('id', transaction.id);
 
-      throw new Error(`STK Push failed: ${stkData.ResponseDescription || 'Unknown error'}`);
+      throw new Error(`STK Push failed: ${stkData.ResponseDescription || stkData.errorMessage || 'Unknown error'}`);
     }
 
   } catch (error) {

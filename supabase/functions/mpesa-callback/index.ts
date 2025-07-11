@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -25,21 +26,24 @@ serve(async (req) => {
     const { Body } = callbackData;
     
     if (!Body || !Body.stkCallback) {
-      throw new Error('Invalid callback data structure');
+      console.error('Invalid callback data structure');
+      return new Response('Invalid callback data', { status: 400 });
     }
 
     const { stkCallback } = Body;
     const { CheckoutRequestID, ResultCode, ResultDesc } = stkCallback;
 
+    console.log('Processing callback:', { CheckoutRequestID, ResultCode, ResultDesc });
+
     // Find transaction by checkout request ID
-    const { data: transaction } = await supabaseClient
+    const { data: transaction, error: fetchError } = await supabaseClient
       .from('transactions')
       .select('*')
       .eq('checkout_request_id', CheckoutRequestID)
       .single();
 
-    if (!transaction) {
-      console.error('Transaction not found for CheckoutRequestID:', CheckoutRequestID);
+    if (fetchError || !transaction) {
+      console.error('Transaction not found for CheckoutRequestID:', CheckoutRequestID, fetchError);
       return new Response('Transaction not found', { status: 404 });
     }
 
@@ -49,40 +53,77 @@ serve(async (req) => {
       // Payment successful
       console.log('Payment successful for transaction:', transaction.id);
       
-      // Extract M-Pesa transaction ID
+      // Extract M-Pesa transaction details
       let mpesaTransactionId = null;
+      let actualAmount = null;
+      let phoneNumber = null;
+      
       if (stkCallback.CallbackMetadata && stkCallback.CallbackMetadata.Item) {
-        const receiptItem = stkCallback.CallbackMetadata.Item.find(
-          (item: any) => item.Name === 'MpesaReceiptNumber'
-        );
+        const items = stkCallback.CallbackMetadata.Item;
+        
+        const receiptItem = items.find((item: any) => item.Name === 'MpesaReceiptNumber');
+        const amountItem = items.find((item: any) => item.Name === 'Amount');
+        const phoneItem = items.find((item: any) => item.Name === 'PhoneNumber');
+        
         mpesaTransactionId = receiptItem?.Value;
+        actualAmount = amountItem?.Value;
+        phoneNumber = phoneItem?.Value;
+        
+        console.log('M-Pesa details:', { mpesaTransactionId, actualAmount, phoneNumber });
       }
 
-      // Update transaction status
-      await supabaseClient
+      // Update transaction status to processing (payment confirmed, now preparing USDT transfer)
+      const { error: updateError } = await supabaseClient
         .from('transactions')
         .update({
-          status: 'completed',
+          status: 'processing',
           mpesa_transaction_id: mpesaTransactionId,
-          completed_at: new Date().toISOString(),
         })
         .eq('id', transaction.id);
 
-      console.log('Transaction updated to completed, initiating USDT transfer...');
+      if (updateError) {
+        console.error('Error updating transaction:', updateError);
+        throw new Error('Failed to update transaction');
+      }
+
+      console.log('Transaction updated to processing, initiating USDT transfer...');
 
       // Initiate USDT transfer
-      await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-usdt`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          transaction_id: transaction.id,
-          wallet_address: transaction.usdt_wallet_address,
-          amount: transaction.usdt_amount,
-        }),
-      });
+      try {
+        const usdtResponse = await supabaseClient.functions.invoke('send-usdt', {
+          body: {
+            transaction_id: transaction.id,
+            wallet_address: transaction.usdt_wallet_address,
+            amount: transaction.usdt_amount,
+          },
+        });
+
+        if (usdtResponse.error) {
+          console.error('USDT transfer failed:', usdtResponse.error);
+          
+          // Update transaction to failed
+          await supabaseClient
+            .from('transactions')
+            .update({
+              status: 'failed',
+              completed_at: new Date().toISOString(),
+            })
+            .eq('id', transaction.id);
+        } else {
+          console.log('USDT transfer initiated successfully');
+        }
+      } catch (usdtError) {
+        console.error('Error calling USDT function:', usdtError);
+        
+        // Update transaction to failed
+        await supabaseClient
+          .from('transactions')
+          .update({
+            status: 'failed',
+            completed_at: new Date().toISOString(),
+          })
+          .eq('id', transaction.id);
+      }
 
     } else {
       // Payment failed
@@ -97,7 +138,7 @@ serve(async (req) => {
         .eq('id', transaction.id);
     }
 
-    return new Response('Callback processed', { 
+    return new Response('Callback processed successfully', { 
       status: 200,
       headers: corsHeaders 
     });
