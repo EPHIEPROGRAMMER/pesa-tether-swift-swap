@@ -16,10 +16,10 @@ export const MpesaToUsdtForm = () => {
   const [confirmAddress, setConfirmAddress] = useState("");
   const [isNumberConfirmed, setIsNumberConfirmed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [exchangeRate, setExchangeRate] = useState(0.0000065);
+  const [exchangeRate, setExchangeRate] = useState(132);
   const [transactionId, setTransactionId] = useState<string | null>(null);
   
-  const usdtAmount = amount ? (parseFloat(amount) / (exchangeRate * 1000000)).toFixed(6) : "0";
+  const usdtAmount = amount ? (parseFloat(amount) / exchangeRate).toFixed(6) : "0";
 
   // Fetch current exchange rate
   useEffect(() => {
@@ -207,7 +207,7 @@ export const MpesaToUsdtForm = () => {
               <div className="text-center">
                 <p className="text-sm text-muted-foreground">You will receive</p>
                 <p className="text-2xl font-bold text-primary">{usdtAmount} USDT</p>
-                <p className="text-xs text-muted-foreground">Rate: 1 KES = {exchangeRate} USDT</p>
+                <p className="text-xs text-muted-foreground">Rate: 1 USDT = {exchangeRate} KES</p>
               </div>
             </div>
           )}
