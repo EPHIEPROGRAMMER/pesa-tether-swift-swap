@@ -62,12 +62,15 @@ serve(async (req) => {
       },
     });
 
+    console.log('Token response status:', tokenResponse.status);
+    const tokenData = await tokenResponse.json();
+    console.log('Token response data:', tokenData);
+
     if (!tokenResponse.ok) {
-      console.error('Failed to get access token:', tokenResponse.status);
-      throw new Error('Failed to authenticate with M-Pesa');
+      console.error('Failed to get access token:', tokenResponse.status, tokenData);
+      throw new Error(`Failed to authenticate with M-Pesa: ${tokenData.error_description || tokenData.errorMessage || 'Unknown error'}`);
     }
 
-    const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
 
     if (!accessToken) {
